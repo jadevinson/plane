@@ -1,0 +1,110 @@
+NOTES BELOW FOR TRYING TO THINK OUT A PLAN
+
+Big area for improvement: I think the simulation algorithm as I have it now is somewhere
+  between quadratic and cubic in the number of people, because the total time grows linearly,
+  the time increments grow smaller, and the amount of work for each time increment grows with
+  the number of people.
+  Is it possible to replace what I have with something like a priority queue of upcoming events?
+  That might be closer to more towards linear time in number of people (probably between
+  linear and quadratic, because the number of events per person will still increase)
+
+Big area for improvement: complexity and correctness, verifying its correct
+   * modularizing it and cleaning up the style will help
+   * Breaking it all up into smaller more manageable chunks
+   * adding functions and explicit tests will hekp
+   * refactoring towards priority queue will help; eg tests that old and new methods
+      get identical answers are valuable when old and new are very different
+
+
+
+ROUGH PLAN:
+
+Show visual pictures of one full boarding process, random order
+
+Simulate 1000 random boardings, and show historgram of boarding times
+
+Show visually and calculate boarding times,
+ for a handful of intersting orders such as WMI
+
+Visually show boarding process for an alpha=0.1 random
+  deviation from an ordered boarding such as WMI
+
+Simulate 1000 random deviations from ordered, and
+  calculate histogram of boarding times.
+
+
+
+PSEUDOCODE:
+while not all_seated:
+    (next_actor, step_time) = min( keys state, key = time to next action for that person ))
+    step everyone forward by step_time, updating their continuous state
+    time += step_time
+    the next actor takes his action, updating his full state as well as people behind that are affected
+    all_seated = all( s[0]=='seated' for s in state)
+
+What is a way to internally represent the state?
+* Characteristics of the plane
+* Characteristics of the passengers
+* State of the boarding process: begins with a collection of queued people,
+during boarding the positions along aisle might be important concept,
+ends with everyone seated.
+
+Possible states for a person:
+  waiting - position
+  unblocked - position, time until moving
+  moving - position, time until obstacle
+  packing - time until completion
+  seated - [nothing more needed]
+
+Transitions:
+ * waiting -> walking : if the person ahead of you starts walking,
+    or the person ahead of you finishes packing
+ * walking -> packing: if you reach your seat
+ * walking -> waiting: if you reach an obstruction
+    * the walking person directly ahead of you starts packing or starts waiting
+      (by induction, they would only start waiting if someone farther ahead starts packing)
+    * you catch up to someone who is packing,
+    * you catch up to someone who is waiting.
+
+ * packing -> seated: takes an amount of time that depends on whether someone already seated
+    has to get up for you and configuration
+      Quick: (,A), (,B), (,C), (A,B), (A,C), (B,C), (AB,C)
+      Slow: (B,A), (C,A), (C,B), (AC,B)
+      Really Slow: (BC,A).
+
+Time until next discrete change:
+ * a walking person reaches obstruction (update column behind to waiting)
+ * a walking person starts packing (update column behind to waiting)
+ * a packing person is seated (update column behind to walking)
+
+take the minimum of all these above.  Then step everyone forward by that amount
+
+Keep stepping time forward until everyone is seated.
+
+###############
+
+
+Try 1000 random orders, what is variability in board time
+Set the random seed for reproducibility
+times = zeros(1000)
+
+for i=range(1000):
+   order = shuffle(seats)
+   s = boarding_simulation(order,p,parm)
+   times(i) = s.board_time()  # Runs the simulation in its full glory, but doesn't show anything visually and simply returns the final run time.
+
+show a histogram of times from random orders
+
+Now try particular orders:
+WMI window middle isle ordering
+back to front ordering
+staggered WMI (as recommended by Steffen)
+
+No one is perfect.  Start with a perect order, but assume that
+a proportion alpha totally disregard your instructions and board at random,
+while (1-alpha) follow instructions.
+How does board time increase as alpha increases?
+
+Selling status, priority boarding (this is important for airline revenue)
+
+Family blocks (members of a family will and should board together)
