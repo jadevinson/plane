@@ -18,10 +18,6 @@ packing_time  = 12.0 # time it takes a person to store their luggage and get sit
 walking_speed = 0.8  # meters/second
 
 
-def nearzero(x):
-    assert(isinstance(x,float))
-    return abs(x) < 0.000001
-
 
 # Seats on the aircraft
 seats = [(r,c) for r in range(1,11) for c in 'ABCD']
@@ -60,15 +56,16 @@ unblocked_state = 1
 moving_state = 2
 packing_state = 3
 seated_state = 4
-
-
+allowed_states = [waiting_state, unblocked_state, moving_state, packing_state, seated_state]
+snames = ['waiting','unblocked','moving','packing','seated']
 
 
 # Set the initial full state just before boarding starts
 state = [waiting_state for i in people]    # waiting, unblocked, moving, packing, seated
 position = [-waiting_space*ptq[i] for i in people] # current position
 goal = [seat_space*s[0] for s in pts]  # Position of goal seat
-rtime = [-1 for i in people] # Remaining Time until each person would initiate state change
+stime = [0 for i in people] #snap time; last time this person was looked at
+ntime = {} # ntime; time at which this person is scheduled to next do something
 
 # Person immediately ahead or behind in line, or -1 if none
 ahead = [-1 for i in people]
@@ -81,12 +78,12 @@ for i in range(1,npeople):
 def printstate():
     print('CURRENT STATE:')
     print('     time = ',time)
-    print('    ','(person,seat,state,position,goal,rtime,ahead,behind)')
+    print('    ','(person,seat,state,position,goal,stime,ahead,behind)')
     for q in queue:
         if state[q] != seated_state:
-            pass
-            #print('    ',(q,pts[q],state[q],position[q],goal[q],rtime[q],ahead[q],behind[q]))
-
+            print('    ',(q,pts[q],snames[state[q]],position[q],goal[q],stime[q],ahead[q],behind[q]))
+    for (v,k) in sorted([(v,k) for (k,v) in  ntime.items()],key=lambda x:x[0]):
+        print (v,k)
 
 # Global time
 time = 0
@@ -99,96 +96,102 @@ printstate()
 
 # To get things started, unblock the person at the very front of the line:
 state[queue[0]] = unblocked_state
-rtime[queue[0]] = reflex_time
-
+ntime[queue[0]] = time + reflex_time
 
 print('STATE AFTER UNBLOCKIG FIRST PERSON')
 printstate()
 
 
-def time_until_seat_or_obstruction(p):
+def time_to_reach_seat_or_obstruction(p):
     "Calculate time to next action for person p, due to either block ahead, or reaching seat."
 
+    assert util.nearzero(stime[p] - time)
     time_to_seat = (goal[p]-position[p])/walking_speed
     time_to_event = time_to_seat
-    next_state = packing_state
     if (ahead[p]>=0) & (state[ahead[p]] in [waiting_state,packing_state,unblocked_state]):
         time_to_obstruction = (position[ahead[p]]-waiting_space-position[p])/walking_speed
         if time_to_obstruction < time_to_seat:
             time_to_event = time_to_obstruction
+    return time + time_to_event
+
+
+def whats_next_seat_or_obstruction(p):
+    assert util.nearzero(stime[p] - time)
+    time_to_seat = (goal[p]-position[p])/walking_speed
+    next_state = packing_state
+    if (ahead[p]>=0) & (state[ahead[p]] in [waiting_state,packing_state,unblocked_state]):
+        time_to_obstruction = (position[ahead[p]]-waiting_space-position[p])/walking_speed
+        if time_to_obstruction < time_to_seat:
             next_state = waiting_state
-    return time_to_event,next_state
+    return next_state
+
+
+def step_forward_to_time(i,t):
+    assert state[i] in allowed_states
+    assert t >= stime[i]  # Only step forward in time
+    if state[i] == moving_state:
+        position[i] += walking_speed * (t-stime[i])
+        assert position[i] <= goal[i] + util.epsilon
+    stime[i] = t
 
 
 while not all([s==seated_state for s in state]):
-    (step_time,next_actor) = min([(v,i) for (i,v) in enumerate(rtime) if v>=0])
 
-    print ('time,steptime,next_actor = ',time,step_time, next_actor)
+    (next_time,next_actor) = min([(v,k) for (k,v) in  ntime.items()],key=lambda x:x[0])
+    print ('time,steptime,next_actor = ',time,next_time - time, next_actor)
+    assert next_time >= time
 
+    time = next_time
 
-    # Now move every person, and global_time, forward by that amount of time:
-    time += step_time
-    for i in people:
-        if state[i] == waiting_state:
-            next
-        elif state[i] == unblocked_state:
-            rtime[i] -= step_time
-            next
-        elif state[i] == moving_state:
-            rtime[i] -= step_time
-            position[i] += walking_speed * step_time
-            next
-        elif state[i] == packing_state:
-            rtime[i] -= step_time
-            next
-        elif state[i] == seated_state:
-            next
-        else:
-            assert False
-
+    step_forward_to_time(next_actor,time)
 
     # Update the state of next actor, and his effects on people behind
     SNA = state[next_actor]
-    assert nearzero(rtime[next_actor])
+    assert util.nearzero(time - ntime[next_actor])
     if SNA == unblocked_state:
         state[next_actor] = moving_state
 
-        rtime[next_actor],_ = time_until_seat_or_obstruction(next_actor)
+        ntime[next_actor] = time_to_reach_seat_or_obstruction(next_actor)
 
         if (behind[next_actor] >= 0):
+            step_forward_to_time(behind[next_actor],time)
             if state[behind[next_actor]]==waiting_state:
                 state[behind[next_actor]] = unblocked_state
-                rtime[behind[next_actor]] = reflex_time
+                ntime[behind[next_actor]] = time + reflex_time
             elif state[behind[next_actor]]==moving_state:
-                rtime[behind[next_actor]],_ = time_until_seat_or_obstruction(behind[next_actor])
+                ntime[behind[next_actor]] = time_to_reach_seat_or_obstruction(behind[next_actor])
+
     elif SNA == moving_state:
         # first determine if we will be transitioning to waiting_state or to packing_state
-        time_to_event,next_state = time_until_seat_or_obstruction(next_actor)
-        assert nearzero(time_to_event)
+        time_next_event = time_to_reach_seat_or_obstruction(next_actor)
+        next_state = whats_next_seat_or_obstruction(next_actor)
+        assert util.nearzero(time_next_event - time)
         if next_state == packing_state:
-            assert nearzero(position[next_actor]-goal[next_actor])
+            assert util.nearzero(position[next_actor]-goal[next_actor])
             state[next_actor] = packing_state
-            rtime[next_actor] = packing_time
+            ntime[next_actor] = time + packing_time
         elif next_state == waiting_state:
             state[next_actor] = waiting_state
-            rtime[next_actor] = -1
+            del ntime[next_actor]
         else:
             assert False
         if (behind[next_actor] >= 0) & (state[behind[next_actor]] == moving_state):
-            rtime[behind[next_actor]],_ = time_until_seat_or_obstruction(behind[next_actor])
+            step_forward_to_time(behind[next_actor],time)
+            ntime[behind[next_actor]] = time_to_reach_seat_or_obstruction(behind[next_actor])
 
     elif SNA == packing_state:
         state[next_actor] = seated_state
-        rtime[next_actor] = -1
+        del ntime[next_actor]
         if ahead[next_actor]>=0:
             behind[ahead[next_actor]] = behind[next_actor]
         if behind[next_actor]>=0:
             ahead[behind[next_actor]] = ahead[next_actor]
             if state[behind[next_actor]] == moving_state:
-                rtime[behind[next_actor]],_ = time_until_seat_or_obstruction(behind[next_actor])
+                step_forward_to_time(behind[next_actor],time)
+                ntime[behind[next_actor]] = time_to_reach_seat_or_obstruction(behind[next_actor])
             if state[behind[next_actor]] == waiting_state:
                 state[behind[next_actor]] = unblocked_state
-                rtime[behind[next_actor]] = reflex_time
+                ntime[behind[next_actor]] = time + reflex_time
         ahead[next_actor] = -1
         behind[next_actor] = -1
     else:

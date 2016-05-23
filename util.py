@@ -1,3 +1,9 @@
+epsilon = 0.000001
+
+def nearzero(x):
+    assert(isinstance(x,float))
+    return abs(x) < epsilon
+
 def iperm(p):
     'Invert a permutation p'
     n = len(p)
