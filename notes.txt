@@ -1,3 +1,5 @@
+# Copyright Jade Vinson 2016
+
 NOTES BELOW FOR TRYING TO THINK OUT A PLAN
 
 Big area for improvement: I think the simulation algorithm as I have it now is somewhere

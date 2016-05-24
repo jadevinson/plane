@@ -1,3 +1,5 @@
+# Copyright Jade Vinson 2016
+
 epsilon = 0.000001
 
 def nearzero(x):

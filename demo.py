@@ -1,7 +1,6 @@
 # Copyright Jade Vinson 2016
 
 import random
-random.seed(131)
 
 import util
 
@@ -21,20 +20,19 @@ class PhysicalConstants:
 class State:
     "Qualitative states for what a single person is doing."
 
-    waiting = 0
-    unblocked = 1
-    moving = 2
-    packing = 3
-    seated = 4
+    waiting = 0     # begin, transitions to unblocked
+    unblocked = 1   # transitions to moving
+    moving = 2      # transitions to waiting or packing
+    packing = 3     # transitions to seated
+    seated = 4      # end
     all_states = [waiting, unblocked, moving, packing, seated]
     names = ['waiting','unblocked','moving','packing','seated']
     obstructing_states = [waiting, unblocked, packing]
+    nonobstructing_states = [moving, seated]
 
 
-class BoardingProcess:
-    "Data and state of time,people,positions,plane,seats,etc."
-
-    def init_people_and_seats():
+class AirplaneAndPassengers:
+    def people_and_seats():
         "Create passenger list of people and assigned seats."
 
         # Seats on the aircraft
@@ -58,14 +56,15 @@ class BoardingProcess:
         return people, people_to_seats
 
 
-    def line_people_up_for_boarding(self,queue):
-        "State of people, especially their positions, based on seats and boarding order."
+class BoardingProcess:
+    "Data and state of time,people,positions,plane,seats,etc, and methods for simulating."
 
-        print('Queue = ',queue)
-        print('People = ',self.people)
-        print('Seat assigned to each person = ',self.people_to_seats)
+    def __init__(self, people, people_to_seats, queue):
+        "Starting lineup of people, positions and timers, based on their seats and boarding order."
 
-        # Set the initial full state just before boarding starts
+        self.people = people[:]
+        self.people_to_seats = people_to_seats[:]
+
         self.state = [State.waiting for i in self.people]
 
         self.position = [0 for i in self.people]
@@ -74,39 +73,28 @@ class BoardingProcess:
 
         self.goal = [PhysicalConstants.seat_space*s[0] for s in self.people_to_seats]  # Position of goal seat
 
-        # Person immediately ahead or behind in line, or -1 if none
         self.ahead = [-1 for i in self.people]
         self.behind = [-1 for i in self.people]
         for i in range(1,len(self.people)):
             self.ahead[queue[i]] = queue[i-1]
             self.behind[queue[i-1]] = queue[i]
 
-
-    def reset_all_timers(self):
-        self.stime = [0 for i in self.people] #snap time; last time this person was looked at
+        self.stime = [0 for i in self.people] # snap time when person was last updated
         self.time = 0 # Global time
         self.ntime = {} # ntime; time at which this person is scheduled to next do something
 
 
-    def __init__(self):
-        self.people, self.people_to_seats = BoardingProcess.init_people_and_seats()
-
-        self.state = self.ahead = self.behind = [0 for i in self.people] #ints
-        self.position = self.goal = self.stime = [0.0 for i in self.people] #floats
-
-        # Line everyone up physically acording to a random order
-        queue = self.people[:]
-        random.shuffle(queue)
-        self.line_people_up_for_boarding(queue)
-
-        self.reset_all_timers()
+    def unblock_person_at_front(self):
+        person_at_front = max([p for p in self.people], key = lambda x: self.position[x])
+        assert self.state[person_at_front] == State.waiting
+        self.state[person_at_front] = State.unblocked
+        self.ntime[person_at_front] = self.time + PhysicalConstants.reflex_time
 
 
     def printstate(self):
         print('  CURRENT STATE:')
         print('     time = ',self.time)
         print('    ','(person,seat,state,position,goal,stime,ahead,behind)')
-
         for q in sorted([p for p in self.people], key = lambda x: -self.position[x]):
             if self.state[q] != State.seated:
                 print('    ',(q,self.people_to_seats[q],State.names[self.state[q]],self.position[q],
@@ -116,130 +104,146 @@ class BoardingProcess:
             print ('    ',(v,k))
 
 
-    def unlock_person_at_front(self):
-        person_at_front = max([p for p in self.people], key = lambda x: self.position[x])
-        assert self.state[person_at_front] == State.waiting
-        self.state[person_at_front] = State.unblocked
-        self.ntime[person_at_front] = self.time + PhysicalConstants.reflex_time
+    def time_to_seat(self,p):
+        return (self.goal[p]-self.position[p])/PhysicalConstants.walking_speed
+
+
+    def is_obstruction_ahead(self,p):
+        return (self.ahead[p]>=0) & (self.state[self.ahead[p]] in State.obstructing_states)
+
+
+    def time_to_obstruction(self,p):
+        dist_to_obstruction = (self.position[self.ahead[p]]-PhysicalConstants.waiting_space-self.position[p])
+        return dist_to_obstruction/PhysicalConstants.walking_speed
 
 
     def time_to_reach_seat_or_obstruction(self,p):
         "Calculate time to next action for person p, due to either block ahead, or reaching seat."
 
-        assert util.nearzero(self.stime[p] - self.time)
-        time_to_seat = (self.goal[p]-self.position[p])/PhysicalConstants.walking_speed
+        time_to_seat = self.time_to_seat(p)
         time_to_event = time_to_seat
-        if (self.ahead[p]>=0) & (self.state[self.ahead[p]] in State.obstructing_states):
-            dist_to_obstruction = (self.position[self.ahead[p]]-PhysicalConstants.waiting_space-self.position[p])
-            time_to_obstruction = dist_to_obstruction/PhysicalConstants.walking_speed
+        if self.is_obstruction_ahead(p):
+            time_to_obstruction = self.time_to_obstruction(p)
             if time_to_obstruction < time_to_seat:
                 time_to_event = time_to_obstruction
+
         return self.time + time_to_event
 
 
     def whats_next_seat_or_obstruction(self,p):
-        assert util.nearzero(self.stime[p] - self.time)
-        time_to_seat = (self.goal[p]-self.position[p])/PhysicalConstants.walking_speed
-        next_state = State.packing
-        if (self.ahead[p]>=0) & (self.state[self.ahead[p]] in State.obstructing_states):
-            dist_to_obstruction = (self.position[self.ahead[p]]-PhysicalConstants.waiting_space-self.position[p])
-            time_to_obstruction = dist_to_obstruction/PhysicalConstants.walking_speed
-            if time_to_obstruction < time_to_seat:
-                next_state = State.waiting
-        return next_state
+        time_to_seat = self.time_to_seat(p)
+        if self.is_obstruction_ahead(p):
+            if self.time_to_obstruction(p) < time_to_seat:
+                return State.waiting
+        return State.packing
 
 
-    def step_forward_to_time(self,i,t):
+    def step_person_forward_to_global_time(self,i):
         assert self.state[i] in State.all_states
-        assert t >= self.stime[i]  # Only step forward in time
+        assert self.time >= self.stime[i]  # Only step forward in time, never backward
+        if i in self.ntime:
+            assert self.time <= self.ntime[i] # Not stepping forward beyond an upcoming event
         if self.state[i] == State.moving:
-            self.position[i] += PhysicalConstants.walking_speed * (t-self.stime[i])
+            self.position[i] += PhysicalConstants.walking_speed * (self.time-self.stime[i])
             assert self.position[i] <= self.goal[i] + util.epsilon
-        self.stime[i] = t
+        self.stime[i] = self.time
 
 
     def is_boarding_process_complete(self):
         return all([s==State.seated for s in self.state])
 
 
-    def advance_by_one_event_and_aftermath(self):
-        (next_time,next_actor) = min([(v,k) for (k,v) in  self.ntime.items()],key=lambda x:x[0])
-        print ('time,steptime,next_actor = ',self.time,next_time - self.time, next_actor)
-        assert next_time >= self.time
+    def remove_person_from_lineup(self,p):
+            person_behind = self.behind[p]
+            person_ahead = self.ahead[p]
+            if person_ahead>=0:
+                self.behind[person_ahead] = person_behind
+            if person_behind>=0:
+                self.ahead[person_behind] = person_ahead
+            self.ahead[p] = -1
+            self.behind[p] = -1
 
-        self.time = next_time
 
-        self.step_forward_to_time(next_actor,self.time)
+    def process_event_for(self,p):
+        # First assert that there is an event to be processed right now,
+        # and time is caught up, and remove event from queue
+        assert util.nearzero(self.time - self.stime[p])
+        assert util.nearzero(self.time - self.ntime[p])
+        del self.ntime[p]
 
-        # Update the state of next actor, and his effects on people behind
-        SNA = self.state[next_actor]
-        assert util.nearzero(self.time - self.ntime[next_actor])
-        if SNA == State.unblocked:
-            self.state[next_actor] = State.moving
-
-            self.ntime[next_actor] = self.time_to_reach_seat_or_obstruction(next_actor)
-
-            BNA = self.behind[next_actor]
-            if (BNA >= 0):
-                self.step_forward_to_time(BNA,self.time)
-                if self.state[BNA]==State.waiting:
-                    self.state[BNA] = State.unblocked
-                    self.ntime[BNA] = self.time + PhysicalConstants.reflex_time
-                elif self.state[BNA] == State.moving:
-                    self.ntime[BNA] = self.time_to_reach_seat_or_obstruction(BNA)
-
-        elif SNA == State.moving:
-            # first determine if we will be transitioning to waiting_state or to packing_state
-            time_next_event = self.time_to_reach_seat_or_obstruction(next_actor)
-            next_state = self.whats_next_seat_or_obstruction(next_actor)
-            assert util.nearzero(time_next_event - self.time)
+        state_before = self.state[p]
+        if state_before == State.unblocked:
+            self.state[p] = State.moving
+            self.ntime[p] = self.time_to_reach_seat_or_obstruction(p)
+        elif state_before == State.moving:
+            next_state = self.whats_next_seat_or_obstruction(p)
             if next_state == State.packing:
-                assert util.nearzero(self.position[next_actor]-self.goal[next_actor])
-                self.state[next_actor] = State.packing
-                self.ntime[next_actor] = self.time + PhysicalConstants.packing_time
+                assert util.nearzero(self.position[p]-self.goal[p])
+                self.state[p] = State.packing
+                self.ntime[p] = self.time + PhysicalConstants.packing_time
             elif next_state == State.waiting:
-                self.state[next_actor] = State.waiting
-                del self.ntime[next_actor]
+                self.state[p] = State.waiting
             else:
                 assert False
-            BNA = self.behind[next_actor]
-            if (BNA >= 0) & (self.state[BNA] == State.moving):
-                self.step_forward_to_time(BNA,self.time)
-                self.ntime[BNA] = self.time_to_reach_seat_or_obstruction(BNA)
-
-        elif SNA == State.packing:
-            self.state[next_actor] = State.seated
-            del self.ntime[next_actor]
-            if self.ahead[next_actor]>=0:
-                self.behind[self.ahead[next_actor]] = self.behind[next_actor]
-            BNA = self.behind[next_actor]
-            if BNA>=0:
-                self.ahead[BNA] = self.ahead[next_actor]
-                if self.state[BNA] == State.moving:
-                    self.step_forward_to_time(BNA,self.time)
-                    self.ntime[BNA] = self.time_to_reach_seat_or_obstruction(BNA)
-                if self.state[BNA] == State.waiting:
-                    self.state[BNA] = State.unblocked
-                    self.ntime[BNA] = self.time + PhysicalConstants.reflex_time
-            self.ahead[next_actor] = -1
-            self.behind[next_actor] = -1
+        elif state_before == State.packing:
+            self.state[p] = State.seated
+            self.remove_person_from_lineup(p)
         else:
-            print (SNA)
             assert False
 
 
-bp = BoardingProcess()
+    def update_person_based_on_events_ahead(self,p):
+        self.step_person_forward_to_global_time(p)
+        state_before = self.state[p]
+        if state_before == State.waiting:
+            a = self.ahead[p]
+            if ((a<0) | (self.state[a] in State.nonobstructing_states)
+                | (self.position[p] < self.position[a]-PhysicalConstants.waiting_space)):
+                self.state[p] = State.unblocked
+                self.ntime[p] = self.time + PhysicalConstants.reflex_time
+        elif state_before == State.moving:
+            self.ntime[p] = self.time_to_reach_seat_or_obstruction(p)
+        elif state_before in [State.packing,State.seated,State.unblocked]:
+            pass
+        else:
+            assert False
 
-print('THE INITIAL STATE:')
-bp.printstate()
 
-bp.unlock_person_at_front()
+    def advance_by_one_event(self):
+        (next_time,actor) = min([(v,k) for (k,v) in  self.ntime.items()],key=lambda x:x[0])
+        person_behind_actor = self.behind[actor]
 
-print('STATE AFTER UNBLOCKING FIRST PERSON')
-bp.printstate()
+        print ('time,steptime,actor = ',self.time,next_time - self.time, actor)
+        assert next_time >= self.time
+        self.time = next_time
 
-while not bp.is_boarding_process_complete():
-    bp.advance_by_one_event_and_aftermath()
+        self.step_person_forward_to_global_time(actor)
+        self.process_event_for(actor)
+
+        if person_behind_actor >= 0:
+            self.update_person_based_on_events_ahead(person_behind_actor)
+
+
+if (__name__ == '__main__'):
+
+    random.seed(131)
+
+    people, people_to_seats = AirplaneAndPassengers.people_and_seats()
+    queue = people[:]
+    random.shuffle(queue)
+
+    bp = BoardingProcess(people, people_to_seats, queue)
+
+    print('THE INITIAL STATE:')
     bp.printstate()
 
-print('FINAL TIME: ', bp.time)
+    bp.unblock_person_at_front()
+
+    print('STATE AFTER UNBLOCKING FIRST PERSON')
+    bp.printstate()
+
+    while not bp.is_boarding_process_complete():
+        bp.advance_by_one_event()
+        #bp.printstate()
+
+    print('FINAL TIME: ', bp.time)
